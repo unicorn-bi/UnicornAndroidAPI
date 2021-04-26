@@ -93,19 +93,6 @@ public class Unicorn {
     private boolean _acquisitionRunning = false;
     private float[] _prevPayload = null;
 
-    public static List<String> GetAvailableDevices(Context context)throws Exception
-    {
-        //acquire paired devices
-        _devices = GetBondUnicornDevices();
-        List<String> deviceSerials = new ArrayList<>();
-        for (BluetoothDevice device: _devices)
-            deviceSerials.add(device.getName());
-
-        //TODO: DISCOVER UNPAIRED DEVICES
-
-        return deviceSerials;
-    }
-
     public static List<String> GetAvailableDevices() throws Exception
     {
         //acquire paired devices
