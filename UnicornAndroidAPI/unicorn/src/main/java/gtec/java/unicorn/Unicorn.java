@@ -303,7 +303,7 @@ public class Unicorn {
         Set<BluetoothDevice> unicornDevices = new ArraySet<>();
         for (BluetoothDevice device:devices)
         {
-            if(device.getName().contains(UnicornSerialPrefix));
+            if(device.getName().contains(UnicornSerialPrefix))
                 unicornDevices.add(device);
         }
         return unicornDevices;
