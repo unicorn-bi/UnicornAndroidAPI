@@ -75,6 +75,7 @@ public class Unicorn {
     private final static byte BytesPerFooterChannel = 2;
     private final static byte FooterLength = (byte)(NumberOfFooterChannels * BytesPerFooterChannel);
     private final static byte FooterOffset = (byte)(HeaderLength + BatteryLevelLength + EegLength + AccLength + GyrLength + CntLength);
+    private final static int WriteTimeoutMs = 1000;
 
     /**
      * Static Members...
@@ -92,6 +93,7 @@ public class Unicorn {
     private Queue<Float> _floatFifo = null;
     private boolean _acquisitionRunning = false;
     private float[] _prevPayload = null;
+    private long _prevWriteTimestamp = 0;
 
     public static List<String> GetAvailableDevices() throws Exception
     {
@@ -240,9 +242,13 @@ public class Unicorn {
         if(_outputStream == null)
             throw new Exception("Initialize output first.");
 
-        //write dummy byte to keep acquisition alive (acquisition gets stuck on most android devices otherwise)
-        byte[] message = new byte[1];
-        _outputStream.write(message, 0, message.length);
+        //write dummy byte to keep acquisition alive (acquisition gets stuck on most android devices otherwise; max once per second)
+        if(System.currentTimeMillis()-_prevWriteTimestamp > WriteTimeoutMs)
+        {
+            _prevWriteTimestamp = System.currentTimeMillis();
+            byte[] message = new byte[1];
+            _outputStream.write(message, 0, message.length);
+        }
 
         //try to acquire data
         int acquisitionTimeoutMs = 1000;
