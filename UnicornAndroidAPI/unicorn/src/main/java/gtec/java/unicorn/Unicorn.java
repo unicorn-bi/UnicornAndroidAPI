@@ -3,8 +3,6 @@ package gtec.java.unicorn;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
-import android.content.Context;
-import android.content.pm.PackageManager;
 import android.util.ArraySet;
 
 import java.io.InputStream;
@@ -16,6 +14,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class Unicorn {
 
@@ -94,6 +93,7 @@ public class Unicorn {
     private boolean _acquisitionRunning = false;
     private float[] _prevPayload = null;
     private long _prevWriteTimestamp = 0;
+    private ReentrantLock _lock;
 
     public static List<String> GetAvailableDevices() throws Exception
     {
@@ -108,6 +108,9 @@ public class Unicorn {
 
     public Unicorn(String serial) throws Exception
     {
+        //initialize lock object
+        _lock = new ReentrantLock();
+
         //check if bluetooth adapter was ini
         InitializeAndCheckBluetoothAdapter();
 
@@ -186,95 +189,136 @@ public class Unicorn {
 
     public void StartAcquisition() throws Exception
     {
-        //send start acquisition command
-        byte[] message = FormMessage(CmdStartAcquisition);
-        _outputStream.write(message, 0, message.length);
+        try
+        {
+            _lock.lock();
 
-        byte[] response = new byte[CmdStartAcquisitionAckLength];
-        int numberOfBytes = _inputStream.read(response, 0, CmdStartAcquisitionAckLength);
+            if(_acquisitionRunning)
+                throw  new Exception("Acquisition already running.");
 
-        if (numberOfBytes != CmdStartAcquisitionAckLength)
-            throw new RuntimeException("Could not stop data acquisition. Could not read data.");
+            //send start acquisition command
+            byte[] message = FormMessage(CmdStartAcquisition);
+            _outputStream.write(message, 0, message.length);
 
-        if (!Arrays.equals(response,CmdStartAcquisitionAck))
-            throw new RuntimeException("Could not start data acquisition. Invalid Acknowledge.");
+            byte[] response = new byte[CmdStartAcquisitionAckLength];
+            int numberOfBytes = _inputStream.read(response, 0, CmdStartAcquisitionAckLength);
 
-        _acquisitionRunning = true;
+            if (numberOfBytes != CmdStartAcquisitionAckLength)
+                throw new RuntimeException("Could not stop data acquisition. Could not read data.");
+
+            if (!Arrays.equals(response,CmdStartAcquisitionAck))
+                throw new RuntimeException("Could not start data acquisition. Invalid Acknowledge.");
+
+            _acquisitionRunning = true;
+
+            _lock.unlock();
+        }
+        catch(Exception e) {
+            _lock.unlock();
+            throw e;
+        }
     }
 
     public void StopAcquisition() throws Exception
     {
-        //send sop acquisition command
-        byte[] message = FormMessage(CmdStopAcquisition);
-        _outputStream.write(message, 0, message.length);
-
-        //wait for ack
-        boolean ackReceived = false;
-        int ackReceiveCnt = 0;
-        do
+        try
         {
-            byte data = (byte)_inputStream.read();
-            if(data == CmdStopAcquisitionAck[ackReceiveCnt])
-                ackReceiveCnt++;
-            else
-                ackReceiveCnt = 0;
+            _lock.lock();
 
-            if(ackReceiveCnt == CmdStopAcquisitionAck.length)
-                ackReceived = true;
+            if(!_acquisitionRunning)
+                throw new Exception("Start acquisition first.");
+
+            //send sop acquisition command
+            byte[] message = FormMessage(CmdStopAcquisition);
+            _outputStream.write(message, 0, message.length);
+
+            //wait for ack
+            boolean ackReceived = false;
+            int ackReceiveCnt = 0;
+            do
+            {
+                byte data = (byte)_inputStream.read();
+                if(data == CmdStopAcquisitionAck[ackReceiveCnt])
+                    ackReceiveCnt++;
+                else
+                    ackReceiveCnt = 0;
+
+                if(ackReceiveCnt == CmdStopAcquisitionAck.length)
+                    ackReceived = true;
+            }
+            while(!ackReceived);
+
+            if (ackReceiveCnt != CmdStopAcquisitionAck.length)
+                throw new RuntimeException("Could not stop data acquisition. Could not read data.");
+
+            _acquisitionRunning = false;
+
+            _lock.unlock();
         }
-        while(!ackReceived);
-
-        if (ackReceiveCnt != CmdStopAcquisitionAck.length)
-            throw new RuntimeException("Could not stop data acquisition. Could not read data.");
-
-        _acquisitionRunning = false;
+        catch(Exception e)
+        {
+            _lock.unlock();
+            throw e;
+        }
     }
 
     public float[] GetData() throws Exception
     {
-        //check bluetooth connection and device state
-        if(!_acquisitionRunning)
-            throw new Exception("Start data acquisition first.");
-        if(_socket == null)
-            throw new Exception("Initialize Bluetooth socket first.");
-        if(_inputStream == null)
-            throw new Exception("Initialize input stream first.");
-        if(_outputStream == null)
-            throw new Exception("Initialize output first.");
-
-        //write dummy byte to keep acquisition alive (acquisition gets stuck on most android devices otherwise; max once per second)
-        if(System.currentTimeMillis()-_prevWriteTimestamp > WriteTimeoutMs)
+        try
         {
-            _prevWriteTimestamp = System.currentTimeMillis();
-            byte[] message = new byte[1];
-            _outputStream.write(message, 0, message.length);
+            _lock.lock();
+
+            //check bluetooth connection and device state
+            if(!_acquisitionRunning)
+                throw new Exception("Acquisition not running");
+            if(_socket == null)
+                throw new Exception("Initialize Bluetooth socket first.");
+            if(_inputStream == null)
+                throw new Exception("Initialize input stream first.");
+            if(_outputStream == null)
+                throw new Exception("Initialize output first.");
+
+            //write dummy byte to keep acquisition alive (acquisition gets stuck on most android devices otherwise; max once per second)
+            if(System.currentTimeMillis()-_prevWriteTimestamp > WriteTimeoutMs)
+            {
+                _prevWriteTimestamp = System.currentTimeMillis();
+                byte[] message = new byte[1];
+                _outputStream.write(message, 0, message.length);
+            }
+
+            //try to acquire data
+            int acquisitionTimeoutMs = 1000;
+            long start = System.currentTimeMillis();
+
+            while (_floatFifo.size()<NumberOfAcquiredChannels && (System.currentTimeMillis()-start) < acquisitionTimeoutMs)
+            {
+                //read data
+                ReadData();
+
+                //sleep 1ms if data is not available yet
+                if(_floatFifo.size()<NumberOfAcquiredChannels)
+                    Thread.sleep(1);
+            }
+
+            //check if acquisition timed out
+            if (_floatFifo.size()<NumberOfAcquiredChannels)
+                throw new Exception("Could not read data.");
+
+            //get data from float fifo
+            float[] dataOut = new float[NumberOfAcquiredChannels];
+            for(int i=0;i<NumberOfAcquiredChannels;i++)
+                dataOut[i]=_floatFifo.poll();
+
+            _lock.unlock();
+
+            //return scan
+            return dataOut;
         }
-
-        //try to acquire data
-        int acquisitionTimeoutMs = 1000;
-        long start = System.currentTimeMillis();
-
-        while (_floatFifo.size()<NumberOfAcquiredChannels && (System.currentTimeMillis()-start) < acquisitionTimeoutMs)
+        catch(Exception e)
         {
-            //read data
-            ReadData();
-
-            //sleep 1ms if data is not available yet
-            if(_floatFifo.size()<NumberOfAcquiredChannels)
-                Thread.sleep(1);
+            _lock.unlock();
+            throw e;
         }
-
-        //check if acquisition timed out
-        if (_floatFifo.size()<NumberOfAcquiredChannels)
-            throw new Exception("Could not read data.");
-
-        //get data from float fifo
-        float[] dataOut = new float[NumberOfAcquiredChannels];
-        for(int i=0;i<NumberOfAcquiredChannels;i++)
-            dataOut[i]=_floatFifo.poll();
-
-        //return scan
-        return dataOut;
     }
 
     private static void InitializeAndCheckBluetoothAdapter() throws Exception

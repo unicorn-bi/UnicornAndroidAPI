@@ -3,12 +3,12 @@ plugins {
 }
 
 android {
-    compileSdkVersion 30
-    buildToolsVersion "30.0.3"
+    compileSdkVersion 31
+    buildToolsVersion '31.0.0'
 
     defaultConfig {
         minSdkVersion 23
-        targetSdkVersion 30
+        targetSdkVersion 31
         versionCode 1
         versionName "1.0"
 
@@ -36,3 +36,22 @@ dependencies {
     androidTestImplementation 'androidx.test.ext:junit:1.1.2'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.3.0'
 }
+
+task deleteOldReleaseBuilds(type: Delete) {
+    delete 'release/Unicorn.jar'
+    delete 'release/Unicorn.aar'
+}
+
+task exportReleaseBuilds(type: Copy){
+    from('build/intermediates/aar_main_jar/release/')
+    into('release/')
+    include('classes.jar')
+    rename('classes.jar', 'Unicorn.jar')
+
+    from('build/outputs/aar/')
+    into('release/')
+    include('unicorn-release.aar')
+    rename('unicorn-release.aar', 'Unicorn.aar')
+}
+
+exportReleaseBuilds.dependsOn(deleteOldReleaseBuilds, build)

@@ -2,7 +2,10 @@ package gtec.java.unicornandroidapi;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.view.View;
@@ -29,14 +32,16 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private Context _context = null;
     private  int _cnt = 0;
 
+    private static final int PermissionRequestCode = 1;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        //get ui elements
         try
         {
-            //get ui elements
             _context = this.getApplicationContext();
             _spnDevices = findViewById(R.id.spnDevices);
             _btnConnect = findViewById(R.id.btnConnect);
@@ -44,7 +49,68 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             _btnConnect.setText(_btnConStr);
             _btnConnect.setOnClickListener(this);
+        }
+        catch(Exception ex)
+        {
+            Toast.makeText(_context,String.format("Could not initialize UI elements. %s", ex.getMessage()) ,Toast.LENGTH_SHORT).show();
+        }
 
+        //check if bluetooth is supported
+        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH))
+        {
+            Toast.makeText(this, "Bluetooth not supported.", Toast.LENGTH_SHORT).show();
+        }
+
+        //request runtime permission for new android devices
+        try
+        {
+            if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_SCAN}, PermissionRequestCode);
+            } else {
+                GetAvailableDevices();
+            }
+        }
+        catch(Exception ex)
+        {
+            Toast.makeText(_context,String.format("Could not acquire available devices. %s", ex.getMessage()) ,Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        switch (requestCode) {
+            case PermissionRequestCode:
+                boolean permissionsGranted = true;
+                for(int i = 0; i < grantResults.length;i++)
+                {
+                    if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+                    {
+                        permissionsGranted = true;
+                    }
+                    else
+                    {
+                        permissionsGranted = false;
+                        break;
+                    }
+                }
+
+                if(!permissionsGranted)
+                {
+                    Toast.makeText(_context,String.format("Bluetooth permission not granted") ,Toast.LENGTH_SHORT).show();
+                }
+                else
+                {
+                    GetAvailableDevices();
+                }
+
+                return;
+        }
+    }
+
+    private void GetAvailableDevices()
+    {
+        try
+        {
             //get available devices
             List<String> devices = Unicorn.GetAvailableDevices();
 
@@ -179,11 +245,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             message += "\nStopping data acquisition...\n";
             _tvState.setText(message);
 
-            //stop acquisition
-            _unicorn.StopAcquisition();
-
             //stop receiving thread
             StopReceiver();
+
+            //stop acquisition
+            _unicorn.StopAcquisition();
 
             //update ui message
             message += String.format("Disconnecting from %s...\n", device);
